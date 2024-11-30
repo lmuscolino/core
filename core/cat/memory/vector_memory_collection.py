@@ -230,7 +230,7 @@ class VectorMemoryCollection:
         
 
         # retrieve memories
-        if self.collection_name == "declarative" and self.doc_store:
+        if self.collection_name == "declarative" and (getattr(self, 'doc_store', None) is not None):
             memories = self.get_answer2(embedding, metadata, threshold, k, **kwargs)
         else:
             memories = self.get_answer(embedding, metadata, threshold, k)
@@ -294,7 +294,7 @@ class VectorMemoryCollection:
         llm = kwargs.get('llm')
 
         self.parent_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1,
+            chunk_size=1000,
             chunk_overlap=0
             )
         # This text splitter is used to create the child documents
@@ -328,6 +328,8 @@ class VectorMemoryCollection:
 
         # Creating a prompt template from the template string
         QA_CHAIN_PROMPT = SystemMessagePromptTemplate.from_template(template)
+
+        from langchain_qdrant import QdrantVectorStore
 
 
         retriever = ParentDocumentRetriever(

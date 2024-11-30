@@ -4,6 +4,7 @@ import traceback
 import tiktoken
 from typing import Literal, get_args, List, Dict, Union, Any
 
+import langchain_qdrant
 from langchain.docstore.document import Document
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig, RunnableLambda
@@ -222,6 +223,8 @@ class StrayCat:
             "k": 3,
             "threshold": 0.7,
             "metadata": None,
+            "query": recall_query,
+            "llm": self._llm
         }
 
         default_procedural_recall_config = {
@@ -238,11 +241,11 @@ class StrayCat:
                 default_episodic_recall_config,
                 cat=self,
             ),
-            self.mad_hatter.execute_hook(
-                "before_cat_recalls_declarative_memories",
-                default_declarative_recall_config,
-                cat=self,
-            ),
+            # self.mad_hatter.execute_hook(
+            #     "before_cat_recalls_declarative_memories",
+            #     default_declarative_recall_config,
+            #     cat=self,
+            # ),
             self.mad_hatter.execute_hook(
                 "before_cat_recalls_procedural_memories",
                 default_procedural_recall_config,
