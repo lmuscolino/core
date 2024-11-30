@@ -21,6 +21,16 @@ from langchain.document_loaders.blob_loaders.schema import Blob
 from cat.utils import singleton
 from cat.log import log
 
+import uuid
+from typing import Any, List, Optional, Sequence, Tuple
+
+
+from langchain.storage.file_system import LocalFileStore
+from langchain.storage._lc_store import create_kv_docstore
+from langchain.docstore.document import Document
+
+
+
 
 @singleton
 class RabbitHole:
@@ -245,7 +255,7 @@ class RabbitHole:
                     file_bytes = f.read()
         else:
             raise ValueError(f"{type(file)} is not a valid type.")
-        return self.string_to_docs(
+        return self.string_to_docs2(
             stray=stray,
             file_bytes=file_bytes,
             source=source,
@@ -309,6 +319,76 @@ class RabbitHole:
             chunk_overlap=chunk_overlap,
         )
         return docs
+
+
+    def string_to_docs2(
+        self,
+        stray,
+        file_bytes: str,
+        source: str = None,
+        content_type: str = "text/plain",
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None
+    ) -> List[Document]:
+        """Convert string to Langchain `Document`.
+
+        Takes a string, converts it to langchain `Document`.
+        Hence, loads it in memory and splits it in overlapped chunks of text.
+
+        Parameters
+        ----------
+        file_bytes : str
+            The string to be converted.
+        source: str
+            Source filename.
+        content_type:
+            Mimetype of content.
+        chunk_size : int
+            Number of tokens in each document chunk.
+        chunk_overlap : int
+            Number of overlapping tokens between consecutive chunks.
+
+        Returns
+        -------
+        docs : List[Document]
+            List of Langchain `Document` of chunked text.
+        """
+
+        # Load the bytes in the Blob schema
+        blob = Blob(data=file_bytes, mimetype=content_type, source=source).from_data(
+            data=file_bytes, mime_type=content_type, path=source
+        )
+        # Parser based on the mime type
+        parser = MimeTypeBasedParser(handlers=self.file_handlers)
+
+        # Parse the text
+        stray.send_ws_message(
+            "I'm parsing the content. Big content could require some minutes..."
+        )
+        super_docs = parser.parse(blob)
+
+        locdir = "."
+
+        # Set up a local file store for vector persistence
+        fs = LocalFileStore(locdir + "/Store")
+        # Create a key-value document store
+        store = create_kv_docstore(fs)
+
+        # Split
+        stray.send_ws_message("Parsing completed. Now let's go with reading process...")
+        docs = self.__split_text2(
+            stray=stray,
+            text=super_docs,
+            chunk_size_child=100,
+            chunk_size_parent=chunk_size,
+            chunk_overlap_parent=chunk_overlap,
+            docstore=store,
+        )
+        return docs
+
+
+
+
 
     def store_documents(
             self,
@@ -401,6 +481,12 @@ class RabbitHole:
 
         log.warning(f"Done uploading {source}")
 
+
+
+
+
+
+
     def __split_text(self, stray, text, chunk_size, chunk_overlap):
         """Split text in overlapped chunks.
 
@@ -472,3 +558,151 @@ class RabbitHole:
     def text_splitter(self):
         self.__reload_text_splitter()
         return self.__text_splitter
+    
+
+
+
+
+    def __split_text2(
+            self, 
+            stray, 
+            text, 
+            chunk_size_child, 
+            chunk_size_parent, 
+            chunk_overlap_parent,
+            docstore,
+            ids: Optional[List[str]] = None, 
+            add_to_docstore: bool = True):
+        """Split text in overlapped chunks.
+
+        This method executes the `rabbithole_splits_text` to split the incoming text in overlapped
+        chunks of text. Other two hooks are available to edit the text before and after the split step.
+
+        Parameters
+        ----------
+        text : str
+            Content of the loaded file.
+        chunk_size : int
+            Number of tokens in each document chunk.
+        chunk_overlap : int
+            Number of overlapping tokens between consecutive chunks.
+
+        Returns
+        -------
+        docs : List[Document]
+            List of split Langchain `Document`.
+
+        Notes
+        -----
+        The default behavior only executes the `rabbithole_splits_text` hook. `before_rabbithole_splits_text` and
+        `after_rabbithole_splitted_text` hooks return the original input without any modification.
+
+        See Also
+        --------
+        before_rabbithole_splits_text
+        rabbithole_splits_text
+        after_rabbithole_splitted_text
+
+        """
+        # do something on the text before it is split
+        text = stray.mad_hatter.execute_hook(
+            "before_rabbithole_splits_text", text, cat=stray
+        )
+        id_key: str = "doc_id"
+        # hooks decide the test splitter (see @property .text_splitter)
+        text_splitter_child = self.text_splitter
+        text_splitter_parent = self.text_splitter
+
+        # override chunk_size and chunk_overlap only if the request has those info
+        if chunk_size_child:
+            text_splitter_child._chunk_size = chunk_size_child
+        if chunk_overlap_parent:
+            text_splitter_parent._chunk_overlap = chunk_overlap_parent
+        if chunk_overlap_parent:
+            text_splitter_parent._chunk_size = chunk_size_parent
+
+
+        log.info(f"Chunk size_child: {chunk_size_child}, Chunk size_parent: {chunk_size_parent}, chunk overlap: {chunk_overlap_parent}")
+        
+
+        if text_splitter_parent is not None:
+            documents = text_splitter_parent.split_documents(text)
+        if ids is None:
+            doc_ids = [str(uuid.uuid4()) for _ in documents]
+            if not add_to_docstore:
+                raise ValueError(
+                    "If ids are not passed in, `add_to_docstore` MUST be True"
+                )
+        else:
+            if len(documents) != len(ids):
+                raise ValueError(
+                    "Got uneven list of documents and ids. "
+                    "If `ids` is provided, should be same length as `documents`."
+                )
+            doc_ids = ids
+
+        docs = []
+        full_docs = []
+        for i, doc in enumerate(documents):
+            _id = doc_ids[i]
+            sub_docs = text_splitter_child.split_documents([doc])
+            for _doc in sub_docs:
+                _doc.metadata[id_key] = _id
+            docs.extend(sub_docs)
+            full_docs.append((_id, doc))
+
+        if add_to_docstore:
+            docstore.mset(full_docs)
+
+        stray.memory.vectors.declarative.add_docstore(docstore)
+        # do something on the text after it is split
+        docs = stray.mad_hatter.execute_hook(
+            "after_rabbithole_splitted_text", docs, cat=stray
+        )
+
+
+        return docs
+
+
+
+
+
+
+    def _split_docs_for_adding(
+        self,
+        documents: List[Document],
+        ids: Optional[List[str]] = None,
+        add_to_docstore: bool = True,
+    ) -> Tuple[List[Document], List[Tuple[str, Document]]]:
+        if self.parent_splitter is not None:
+            documents = self.parent_splitter.split_documents(documents)
+        if ids is None:
+            doc_ids = [str(uuid.uuid4()) for _ in documents]
+            if not add_to_docstore:
+                raise ValueError(
+                    "If ids are not passed in, `add_to_docstore` MUST be True"
+                )
+        else:
+            if len(documents) != len(ids):
+                raise ValueError(
+                    "Got uneven list of documents and ids. "
+                    "If `ids` is provided, should be same length as `documents`."
+                )
+            doc_ids = ids
+
+        docs = []
+        full_docs = []
+        for i, doc in enumerate(documents):
+            _id = doc_ids[i]
+            sub_docs = self.child_splitter.split_documents([doc])
+            if self.child_metadata_fields is not None:
+                for _doc in sub_docs:
+                    _doc.metadata = {
+                        k: _doc.metadata[k] for k in self.child_metadata_fields
+                    }
+            for _doc in sub_docs:
+                _doc.metadata[self.id_key] = _id
+            docs.extend(sub_docs)
+            full_docs.append((_id, doc))
+
+        return docs, full_docs
