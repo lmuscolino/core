@@ -2,6 +2,10 @@ import os
 import uuid
 from typing import Any, List, Iterable, Optional
 import requests
+from langchain.chains import RetrievalQA
+from langchain.prompts import SystemMessagePromptTemplate
+from langchain.retrievers import ParentDocumentRetriever
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from qdrant_client.qdrant_remote import QdrantRemote
 from qdrant_client.http.models import (
@@ -200,6 +204,10 @@ class VectorMemoryCollection:
         else:
             return None
 
+    def add_docstore(self, docstore):
+        self.doc_store = docstore
+
+
     def delete_points_by_metadata_filter(self, metadata=None):
         res = self.client.delete(
             collection_name=self.collection_name,
@@ -217,25 +225,15 @@ class VectorMemoryCollection:
 
     # retrieve similar memories from embedding
     def recall_memories_from_embedding(
-        self, embedding, metadata=None, k=5, threshold=None
+        self, embedding, metadata=None, k=5, threshold=None, **kwargs
     ):
+        
+
         # retrieve memories
-        memories = self.client.search(
-            collection_name=self.collection_name,
-            query_vector=embedding,
-            query_filter=self._qdrant_filter_from_dict(metadata),
-            with_payload=True,
-            with_vectors=True,
-            limit=k,
-            score_threshold=threshold,
-            search_params=SearchParams(
-                quantization=QuantizationSearchParams(
-                    ignore=False,
-                    rescore=True,
-                    oversampling=2.0,  # Available as of v1.3.0
-                )
-            ),
-        )
+        if self.collection_name == "declarative" and self.doc_store:
+            memories = self.get_answer2(embedding, metadata, threshold, k, **kwargs)
+        else:
+            memories = self.get_answer(embedding, metadata, threshold, k)
 
         # convert Qdrant points to langchain.Document
         langchain_documents_from_points = []
@@ -257,6 +255,117 @@ class VectorMemoryCollection:
         #    doc.lc_kwargs = None
 
         return langchain_documents_from_points
+
+
+    def get_answer(
+            self,
+            embedding,
+            metadata,
+            threshold,
+            k,
+            ):
+        return self.client.search(
+            collection_name=self.collection_name,
+            query_vector=embedding,
+            query_filter=self._qdrant_filter_from_dict(metadata),
+            with_payload=True,
+            with_vectors=True,
+            limit=k,
+            score_threshold=threshold,
+            search_params=SearchParams(
+                quantization=QuantizationSearchParams(
+                    ignore=False,
+                    rescore=True,
+                    oversampling=2.0,  # Available as of v1.3.0
+                )
+            ),
+        )
+    
+    def get_answer2(
+        self,
+        embedding,
+        metadata,
+        threshold,
+        k,
+        **kwargs
+        ):
+        # This text splitter is used to create the parent documents
+        query = kwargs.get('query')       
+        llm = kwargs.get('llm')
+
+        self.parent_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1,
+            chunk_overlap=0
+            )
+        # This text splitter is used to create the child documents
+        # It should create documents smaller than the parent
+        self.child_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=100,
+            chunk_overlap=0
+            )
+
+        # Template for the prompt used in RetrievalQA
+        prompt = """Use the following portion of a long document to try to answer the question.
+        The text is delimited by ###.
+        Return any relevant text that can help to answer the question.
+
+        TEXT: ### {context} ###
+        """
+
+
+        template = """The provided information is derived from a larger text, divided into smaller parts. \
+        Each question is associated with an answer corresponding to a specific section of the text. \
+        The task is to determine the answer to the question when considering the entire long text, integrating insights from all parts. \
+        Please note that the specific content of the long text is not available, and the answers provided pertain to their respective parts. \
+        The challenge is to synthesize these partial answers to formulate a comprehensive response to the given question when considering the complete context of the long text.\
+
+        Given a set of answers is delimited by '''.
+
+        answers: '''
+        {summaries}
+        '''
+        """
+
+        # Creating a prompt template from the template string
+        QA_CHAIN_PROMPT = SystemMessagePromptTemplate.from_template(template)
+
+
+        retriever = ParentDocumentRetriever(
+            vectorstore=self.client,
+            docstore=self.doc_store,
+            child_splitter=self.child_splitter,
+            parent_splitter=self.parent_splitter,
+            search_type = "mmr",
+            search_kwargs = {"k": k}
+        )
+
+
+        chain_type_kwargs={
+            "verbose": True,
+        #    "question_prompt": QA_MAPREDUCE_PROMPT,
+        #    "combine_prompt": template,
+        #    "combine_document_variable_name": "context",
+            }
+
+
+
+        self.qa_chain = RetrievalQA.from_chain_type(
+            llm,
+            retriever=retriever,
+            return_source_documents=True,
+            chain_type_kwargs=chain_type_kwargs,
+            chain_type="map_reduce",
+        )
+
+        # Set the prompt for RetrievalQA chain
+        self.qa_chain.combine_documents_chain.reduce_documents_chain.combine_documents_chain.llm_chain.prompt.messages[
+            0] = QA_CHAIN_PROMPT
+        
+        self.qa_chain.combine_documents_chain.llm_chain.prompt.messages[0].prompt.template = prompt
+
+        return self.qa_chain({"query": query})
+
+    
 
     # retrieve all the points in the collection
     def get_all_points(self):
@@ -316,3 +425,4 @@ class VectorMemoryCollection:
                 collection_name=self.collection_name, snapshot_name=s.name
             )
         log.warning(f'Dump "{new_name}" completed')
+
