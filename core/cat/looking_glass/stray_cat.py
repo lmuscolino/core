@@ -4,7 +4,6 @@ import traceback
 import tiktoken
 from typing import Literal, get_args, List, Dict, Union, Any
 
-import langchain_qdrant
 from langchain.docstore.document import Document
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig, RunnableLambda

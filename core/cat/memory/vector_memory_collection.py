@@ -329,9 +329,6 @@ class VectorMemoryCollection:
         # Creating a prompt template from the template string
         QA_CHAIN_PROMPT = SystemMessagePromptTemplate.from_template(template)
 
-        from langchain_qdrant import QdrantVectorStore
-
-
         retriever = ParentDocumentRetriever(
             vectorstore=self.client,
             docstore=self.doc_store,
