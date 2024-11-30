@@ -215,6 +215,9 @@ class StrayCat:
             "k": 3,
             "threshold": 0.7,
             "metadata": {"source": self.user_id},
+            "query": recall_query,
+            "llm": self._llm
+
         }
 
         default_declarative_recall_config = {
