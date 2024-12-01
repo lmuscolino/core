@@ -6,6 +6,8 @@ from langchain.chains import RetrievalQA
 from langchain.prompts import SystemMessagePromptTemplate
 from langchain.retrievers import ParentDocumentRetriever
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
 
 from qdrant_client.qdrant_remote import QdrantRemote
 from qdrant_client.http.models import (
@@ -232,6 +234,21 @@ class VectorMemoryCollection:
         # retrieve memories
         if self.collection_name == "declarative" and (getattr(self, 'doc_store', None) is not None):
             memories = self.get_answer2(embedding, metadata, threshold, k, **kwargs)
+            
+            langchain_documents_from_points = []
+            langchain_documents_from_points.append(
+                (
+                    Document(
+                        page_content=memories["page_content"],
+                        metadata=memories["metadata"] or {},
+                    ),
+                    0,
+                    1,
+                    1,
+                )
+            )
+            return langchain_documents_from_points
+
         else:
             memories = self.get_answer(embedding, metadata, threshold, k)
 
@@ -292,6 +309,7 @@ class VectorMemoryCollection:
         # This text splitter is used to create the parent documents
         query = kwargs.get('query')       
         llm = kwargs.get('llm')
+        embedder = kwargs.get('embedder')
 
         self.parent_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
@@ -329,8 +347,17 @@ class VectorMemoryCollection:
         # Creating a prompt template from the template string
         QA_CHAIN_PROMPT = SystemMessagePromptTemplate.from_template(template)
 
+
+        vector_store = QdrantVectorStore(
+            client=self.client,
+            collection_name="declarative",
+            embedding = embedder
+        )
+
+
+
         retriever = ParentDocumentRetriever(
-            vectorstore=self.client,
+            vectorstore=vector_store,
             docstore=self.doc_store,
             child_splitter=self.child_splitter,
             parent_splitter=self.parent_splitter,
@@ -362,7 +389,17 @@ class VectorMemoryCollection:
         
         self.qa_chain.combine_documents_chain.llm_chain.prompt.messages[0].prompt.template = prompt
 
-        return self.qa_chain({"query": query})
+        res = self.qa_chain({"query": query})
+        print(res['result'])
+        mem= {
+            "page_content": res['result'],
+            "metadata" : {
+                "source": "admin",
+                "when": 0
+            }
+        }
+
+        return mem
 
     
 

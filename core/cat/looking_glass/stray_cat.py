@@ -216,9 +216,6 @@ class StrayCat:
             "k": 3,
             "threshold": 0.7,
             "metadata": {"source": self.user_id},
-            "query": recall_query,
-            "llm": self._llm
-
         }
 
         default_declarative_recall_config = {
@@ -227,7 +224,8 @@ class StrayCat:
             "threshold": 0.7,
             "metadata": None,
             "query": recall_query,
-            "llm": self._llm
+            "llm": self._llm,
+            "embedder": self.embedder
         }
 
         default_procedural_recall_config = {
@@ -244,6 +242,7 @@ class StrayCat:
                 default_episodic_recall_config,
                 cat=self,
             ),
+            default_declarative_recall_config,
             # self.mad_hatter.execute_hook(
             #     "before_cat_recalls_declarative_memories",
             #     default_declarative_recall_config,
@@ -256,6 +255,8 @@ class StrayCat:
             ),
         ]
 
+
+    
         memory_types = self.memory.vectors.collections.keys()
 
         for config, memory_type in zip(recall_configs, memory_types):
