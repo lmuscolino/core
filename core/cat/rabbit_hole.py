@@ -367,7 +367,7 @@ class RabbitHole:
         )
         super_docs = parser.parse(blob)
 
-        locdir = "home/lorenzo/Lavoro/Stregatto/LocDir"
+        locdir = "."
 
         # Set up a local file store for vector persistence
         fs = LocalFileStore(locdir + "/Store")

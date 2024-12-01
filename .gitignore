@@ -21,6 +21,7 @@ local_vector_memory
 test_db.db
 core/Store/
 
+/core/Store/*
 # old admin folder
 admin
 

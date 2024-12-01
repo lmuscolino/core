@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Base
 from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers.string import StrOutputParser
+import langchain_qdrant
 
 from fastapi import WebSocket
 
@@ -225,6 +226,8 @@ class StrayCat:
             "k": 3,
             "threshold": 0.7,
             "metadata": None,
+            "query": recall_query,
+            "llm": self._llm
         }
 
         default_procedural_recall_config = {
@@ -241,11 +244,11 @@ class StrayCat:
                 default_episodic_recall_config,
                 cat=self,
             ),
-            self.mad_hatter.execute_hook(
-                "before_cat_recalls_declarative_memories",
-                default_declarative_recall_config,
-                cat=self,
-            ),
+            # self.mad_hatter.execute_hook(
+            #     "before_cat_recalls_declarative_memories",
+            #     default_declarative_recall_config,
+            #     cat=self,
+            # ),
             self.mad_hatter.execute_hook(
                 "before_cat_recalls_procedural_memories",
                 default_procedural_recall_config,
