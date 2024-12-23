@@ -233,7 +233,7 @@ class VectorMemoryCollection:
 
         # retrieve memories
         if self.collection_name == "declarative" and (getattr(self, 'doc_store', None) is not None):
-            memories = self.get_answer2(embedding, metadata, threshold, k, **kwargs)
+            memories = self.get_answer_mapreduce(k, **kwargs)
             
             langchain_documents_from_points = []
             langchain_documents_from_points.append(
@@ -298,11 +298,8 @@ class VectorMemoryCollection:
             ),
         )
     
-    def get_answer2(
+    def get_answer_mapreduce(
         self,
-        embedding,
-        metadata,
-        threshold,
         k,
         **kwargs
         ):
@@ -330,7 +327,6 @@ class VectorMemoryCollection:
         TEXT: ### {context} ###
         """
 
-
         template = """The provided information is derived from a larger text, divided into smaller parts. \
         Each question is associated with an answer corresponding to a specific section of the text. \
         The task is to determine the answer to the question when considering the entire long text, integrating insights from all parts. \
@@ -347,14 +343,18 @@ class VectorMemoryCollection:
         # Creating a prompt template from the template string
         QA_CHAIN_PROMPT = SystemMessagePromptTemplate.from_template(template)
 
+        chain_type_kwargs={
+            "verbose": True,
+        #    "question_prompt": QA_MAPREDUCE_PROMPT,
+        #    "combine_prompt": template,
+        #    "combine_document_variable_name": "context",
+            }
 
         vector_store = QdrantVectorStore(
             client=self.client,
             collection_name="declarative",
             embedding = embedder
         )
-
-
 
         retriever = ParentDocumentRetriever(
             vectorstore=vector_store,
@@ -364,16 +364,6 @@ class VectorMemoryCollection:
             search_type = "mmr",
             search_kwargs = {"k": k}
         )
-
-
-        chain_type_kwargs={
-            "verbose": True,
-        #    "question_prompt": QA_MAPREDUCE_PROMPT,
-        #    "combine_prompt": template,
-        #    "combine_document_variable_name": "context",
-            }
-
-
 
         self.qa_chain = RetrievalQA.from_chain_type(
             llm,
@@ -390,7 +380,7 @@ class VectorMemoryCollection:
         self.qa_chain.combine_documents_chain.llm_chain.prompt.messages[0].prompt.template = prompt
 
         res = self.qa_chain({"query": query})
-        print(res['result'])
+        print(res)
         mem= {
             "page_content": res['result'],
             "metadata" : {
