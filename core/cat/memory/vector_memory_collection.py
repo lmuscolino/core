@@ -28,9 +28,18 @@ from qdrant_client.http.models import (
 )
 
 from langchain.docstore.document import Document
+from cat.memory.services.parent_document_service import CustomParentDocumentRetriever
 
 from cat.log import log
 from cat.env import get_env
+
+from langchain.callbacks.base import BaseCallbackHandler
+
+
+class RetrieverHandler(BaseCallbackHandler):
+    def on_retriever_end(self, documents, *, run_id, parent_run_id = None, **kwargs):
+        print(kwargs)
+        return super().on_retriever_end(documents, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
 
 
 class VectorMemoryCollection:
@@ -224,30 +233,36 @@ class VectorMemoryCollection:
             points_selector=points_ids,
         )
         return res
+    
+    def _is_mapreduce_args(self, kwargs):
+        return 'llm' in kwargs
 
     # retrieve similar memories from embedding
     def recall_memories_from_embedding(
         self, embedding, metadata=None, k=5, threshold=None, **kwargs
     ):
         
-
         # retrieve memories
         if self.collection_name == "declarative" and (getattr(self, 'doc_store', None) is not None):
-            memories = self.get_answer_mapreduce(k, **kwargs)
-            
-            langchain_documents_from_points = []
-            langchain_documents_from_points.append(
-                (
-                    Document(
-                        page_content=memories["page_content"],
-                        metadata=memories["metadata"] or {},
-                    ),
-                    0,
-                    1,
-                    1,
+            if self._is_mapreduce_args(kwargs):
+
+                memories = self.get_answer_mapreduce(k, **kwargs)
+                
+                langchain_documents_from_points = []
+                langchain_documents_from_points.append(
+                    (
+                        Document(
+                            page_content=memories["page_content"],
+                            metadata=memories["metadata"] or {},
+                        ),
+                        0,
+                        1,
+                        1,
+                    )
                 )
-            )
-            return langchain_documents_from_points
+                return langchain_documents_from_points
+            else:
+                memories = self.get_answer(embedding, metadata, threshold, k)    
 
         else:
             memories = self.get_answer(embedding, metadata, threshold, k)
@@ -307,6 +322,7 @@ class VectorMemoryCollection:
         query = kwargs.get('query')       
         llm = kwargs.get('llm')
         embedder = kwargs.get('embedder')
+        # TODO passa anche qui il riferimento al docstore
 
         self.parent_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
@@ -356,7 +372,7 @@ class VectorMemoryCollection:
             embedding = embedder
         )
 
-        retriever = ParentDocumentRetriever(
+        retriever = CustomParentDocumentRetriever(
             vectorstore=vector_store,
             docstore=self.doc_store,
             child_splitter=self.child_splitter,
@@ -377,10 +393,16 @@ class VectorMemoryCollection:
         self.qa_chain.combine_documents_chain.reduce_documents_chain.combine_documents_chain.llm_chain.prompt.messages[
             0] = QA_CHAIN_PROMPT
         
-        self.qa_chain.combine_documents_chain.llm_chain.prompt.messages[0].prompt.template = prompt
+        self.qa_chain.combine_documents_chain.llm_chain.prompt.messages[0].prompt.template = prompt        
 
-        res = self.qa_chain({"query": query})
-        print(res)
+        # res = self.qa_chain.invoke(
+        #     {"query": query}, 
+        #     {'callbacks': [RetrieverHandler()]}
+        # )
+        res = self.qa_chain.invoke(
+            {"query": query}
+        )
+
         mem= {
             "page_content": res['result'],
             "metadata" : {
@@ -391,7 +413,6 @@ class VectorMemoryCollection:
 
         return mem
 
-    
 
     # retrieve all the points in the collection
     def get_all_points(self):

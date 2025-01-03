@@ -3,6 +3,8 @@ import socket
 from cat.utils import extract_domain_from_url, is_https
 
 from qdrant_client import QdrantClient
+from langchain.storage.file_system import LocalFileStore
+from langchain.storage._lc_store import create_kv_docstore, BaseStore
 
 from cat.memory.vector_memory_collection import VectorMemoryCollection
 from cat.log import log
@@ -43,6 +45,8 @@ class VectorMemory:
             # Have the collection as an instance attribute
             # (i.e. do things like cat.memory.vectors.declarative.something())
             setattr(self, collection_name, collection)
+        
+        self.connect_to_docstore()
 
     def connect_to_vector_memory(self) -> None:
         db_path = "cat/data/local_vector_memory/"
@@ -82,3 +86,15 @@ class VectorMemory:
                 https=qdrant_https,
                 api_key=qdrant_api_key,
             )
+    
+    def connect_to_docstore(self):
+        locdir = "."
+
+        # Set up a local file store for vector persistence
+        fs = LocalFileStore(locdir + "/Store")
+        # Create a key-value document store
+        store = create_kv_docstore(fs)
+        
+        self.doc_store: BaseStore = store
+        self.declarative.add_docstore(store)
+

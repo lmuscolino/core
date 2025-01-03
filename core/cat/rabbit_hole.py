@@ -367,12 +367,12 @@ class RabbitHole:
         )
         super_docs = parser.parse(blob)
 
-        locdir = "."
+        # locdir = "."
 
-        # Set up a local file store for vector persistence
-        fs = LocalFileStore(locdir + "/Store")
-        # Create a key-value document store
-        store = create_kv_docstore(fs)
+        # # Set up a local file store for vector persistence
+        # fs = LocalFileStore(locdir + "/Store")
+        # # Create a key-value document store
+        # store = create_kv_docstore(fs)
 
         # Split
         stray.send_ws_message("Parsing completed. Now let's go with reading process...")
@@ -382,7 +382,8 @@ class RabbitHole:
             chunk_size_child=100,
             chunk_size_parent=chunk_size,
             chunk_overlap_parent=chunk_overlap,
-            docstore=store,
+            # docstore=store,
+            docstore = stray.memory.vectors.doc_store
         )
         return docs
 
@@ -654,7 +655,7 @@ class RabbitHole:
         if add_to_docstore:
             docstore.mset(full_docs)
 
-        stray.memory.vectors.declarative.add_docstore(docstore)
+        # stray.memory.vectors.declarative.add_docstore(docstore)
         # do something on the text after it is split
         docs = stray.mad_hatter.execute_hook(
             "after_rabbithole_splitted_text", docs, cat=stray
